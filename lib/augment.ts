@@ -23,9 +23,36 @@ if (!existsSync(sessionPath) && process.env.AUGMENT_SESSION_JSON) {
   console.log("[augment] Wrote session.json from AUGMENT_SESSION_JSON env var");
 }
 
+// Create an isolated workspace so Auggie doesn't index the app's own source
+import { tmpdir } from "node:os";
+const auggieWorkspace = path.join(tmpdir(), "codepilot-auggie-workspace");
+if (!existsSync(auggieWorkspace)) {
+  mkdirSync(auggieWorkspace, { recursive: true });
+  // Create a minimal .git so auggie treats it as a project
+  mkdirSync(path.join(auggieWorkspace, ".git"), { recursive: true });
+  writeFileSync(
+    path.join(auggieWorkspace, ".git", "HEAD"),
+    "ref: refs/heads/main\n",
+  );
+}
+
 async function getAuggieSDK() {
   const { Auggie } = await import("@augmentcode/auggie-sdk");
   return Auggie;
+}
+
+// Run Auggie from the isolated workspace to prevent local file indexing
+async function createAuggieClient() {
+  const Auggie = await getAuggieSDK();
+  const originalCwd = process.cwd();
+  process.chdir(auggieWorkspace);
+  try {
+    const client = await Auggie.create();
+    return { client, restore: () => process.chdir(originalCwd) };
+  } catch (e) {
+    process.chdir(originalCwd);
+    throw e;
+  }
 }
 
 export class AugmentClient {
@@ -37,18 +64,17 @@ export class AugmentClient {
     overview: string;
     fileAnalyses: { path: string; summary: string }[];
   }> {
-    const Auggie = await getAuggieSDK();
-    const client = await Auggie.create();
+    const { client, restore } = await createAuggieClient();
 
     try {
-      // Build a concise file summary to keep prompt manageable
       const fileList = files
         .slice(0, 15)
         .map((f) => `--- ${f.path} ---\n${f.content.slice(0, 2000)}`)
         .join("\n\n");
 
       const prompt =
-        "Analyze these source files and write a markdown report with: " +
+        "You are a code analysis tool. Do NOT read any local files or use any tools. " +
+        "ONLY analyze the source files provided below and write a markdown report with: " +
         "1) Project Overview, 2) Architecture, 3) Tech Stack, " +
         "4) Key Components, 5) Entry Points, 6) Data Flow, " +
         "7) Getting Started guide.\n\n" +
@@ -69,6 +95,7 @@ export class AugmentClient {
         fileAnalyses,
       };
     } finally {
+      restore();
       await client.close();
     }
   }
@@ -78,8 +105,7 @@ export class AugmentClient {
 export async function chatWithAuggie(
   prompt: string,
 ): Promise<string> {
-  const Auggie = await getAuggieSDK();
-  const client = await Auggie.create();
+  const { client, restore } = await createAuggieClient();
 
   try {
     const response = await client.prompt(prompt);
@@ -87,6 +113,7 @@ export async function chatWithAuggie(
       ? response
       : JSON.stringify(response);
   } finally {
+    restore();
     await client.close();
   }
 }
