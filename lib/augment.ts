@@ -65,15 +65,12 @@ export class AugmentClient {
 
 // Chat helper — use Auggie SDK for answering questions about analyzed repos
 export async function chatWithAuggie(
-  systemPrompt: string,
-  userMessage: string,
+  prompt: string,
 ): Promise<string> {
   const Auggie = await getAuggieSDK();
   const client = await Auggie.create();
 
   try {
-    const prompt =
-      systemPrompt + "\n\n---\n\nUser question: " + userMessage;
     const response = await client.prompt(prompt);
     return typeof response === "string"
       ? response

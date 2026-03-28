@@ -22,52 +22,7 @@ export async function POST(req: Request) {
     repoName?: string;
   } = await req.json();
 
-  // Build system prompt with repo context
-  let systemPrompt = `You are CodePilot, an expert AI assistant that helps developers understand codebases. You have deep knowledge of the repository that has been analyzed. 
-
-Be specific, reference actual file paths and code patterns from the analysis. When answering:
-- Reference specific files and their purposes
-- Explain architecture decisions
-- Suggest where to look for specific functionality
-- Help with onboarding, setup, and contribution
-- Use markdown formatting for clarity`;
-
-  if (repoOwner && repoName) {
-    const repoData = getAnalyzedRepo(repoOwner, repoName);
-    if (repoData) {
-      const context = buildContextPrompt(repoData);
-
-      // Also query Senso for additional context if available
-      let sensoContext = "";
-      if (repoData.sensoOrgId) {
-        const senso = new SensoClient();
-        const lastUserMessage = messages
-          .filter((m) => m.role === "user")
-          .pop();
-        if (lastUserMessage) {
-          const msgText = lastUserMessage.parts
-            .filter((p): p is { type: "text"; text: string } => p.type === "text")
-            .map((p) => p.text)
-            .join(" ");
-          const results = await senso.queryKnowledge(
-            repoData.sensoOrgId,
-            msgText,
-          );
-          if (results.length > 0) {
-            sensoContext = `\n\n## Additional Context from Senso Knowledge Base\n${results.join("\n\n")}`;
-          }
-        }
-      }
-
-      systemPrompt += `\n\n---\n\nHere is the analyzed repository context:\n\n${context}${sensoContext}`;
-    }
-  }
-
-  if (system) {
-    systemPrompt = `${systemPrompt}\n\n${system}`;
-  }
-
-  // Extract the last user message for Auggie
+  // Extract the last user message
   const lastUserMessage = messages
     .filter((m) => m.role === "user")
     .pop();
@@ -78,8 +33,57 @@ Be specific, reference actual file paths and code patterns from the analysis. Wh
         .join(" ")
     : "";
 
-  // Use Auggie as primary LLM for chat
-  const response = await chatWithAuggie(systemPrompt, userText);
+  // Build repo context from analyzed data
+  let repoContext = "";
+  let repoLabel = "an unknown repository";
+  if (repoOwner && repoName) {
+    repoLabel = `${repoOwner}/${repoName}`;
+    const repoData = getAnalyzedRepo(repoOwner, repoName);
+    if (repoData) {
+      repoContext = buildContextPrompt(repoData);
+
+      // Also query Senso for additional context if available
+      if (repoData.sensoOrgId) {
+        const senso = new SensoClient();
+        if (userText) {
+          const results = await senso.queryKnowledge(
+            repoData.sensoOrgId,
+            userText,
+          );
+          if (results.length > 0) {
+            repoContext += `\n\n## Additional Context from Senso Knowledge Base\n${results.join("\n\n")}`;
+          }
+        }
+      }
+    } else {
+      repoContext = `(No analyzed data found for ${repoLabel}. The repository may need to be re-analyzed.)`;
+    }
+  }
+
+  // Build a single self-contained prompt that includes all context inline
+  // This prevents Auggie from exploring its local filesystem
+  const fullPrompt = [
+    `IMPORTANT: You are answering questions about the GitHub repository "${repoLabel}".`,
+    `Do NOT read any local files or explore any local filesystem.`,
+    `ONLY use the repository context provided below to answer the user's question.`,
+    `If the context does not contain enough information, say so — do not guess or look elsewhere.`,
+    ``,
+    `Be specific, reference actual file paths and code patterns from the context.`,
+    `Use markdown formatting for clarity.`,
+    ``,
+    `=== REPOSITORY CONTEXT FOR ${repoLabel.toUpperCase()} ===`,
+    repoContext,
+    `=== END REPOSITORY CONTEXT ===`,
+    ``,
+    system ? system : "",
+    ``,
+    `User question about ${repoLabel}: ${userText}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  // Use Auggie — pass entire prompt as user message so it doesn't act as coding agent
+  const response = await chatWithAuggie(fullPrompt);
 
   const stream = createUIMessageStream({
     execute: ({ writer }) => {
