@@ -83,6 +83,11 @@ Be specific, reference actual file paths and code patterns from the analysis. Wh
 
   const stream = createUIMessageStream({
     execute: ({ writer }) => {
+      // Must send text-start before any text-delta chunks
+      writer.write({
+        type: "text-start",
+        id: "auggie-msg",
+      });
       const chunkSize = 20;
       for (let i = 0; i < response.length; i += chunkSize) {
         writer.write({
@@ -91,6 +96,10 @@ Be specific, reference actual file paths and code patterns from the analysis. Wh
           id: "auggie-msg",
         });
       }
+      writer.write({
+        type: "text-end",
+        id: "auggie-msg",
+      });
     },
   });
 
