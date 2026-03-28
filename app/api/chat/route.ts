@@ -1,12 +1,8 @@
-import { frontendTools } from "@assistant-ui/react-ai-sdk";
 import {
-  JSONSchema7,
-  streamText,
-  convertToModelMessages,
   createUIMessageStream,
+  createUIMessageStreamResponse,
   type UIMessage,
 } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { getAnalyzedRepo, buildContextPrompt } from "@/lib/store";
 import { SensoClient } from "@/lib/senso";
 import { chatWithAuggie } from "@/lib/augment";
@@ -21,7 +17,7 @@ export async function POST(req: Request) {
   }: {
     messages: UIMessage[];
     system?: string;
-    tools?: Record<string, { description?: string; parameters: JSONSchema7 }>;
+    tools?: Record<string, { description?: string; parameters: unknown }>;
     repoOwner?: string;
     repoName?: string;
   } = await req.json();
@@ -82,36 +78,21 @@ Be specific, reference actual file paths and code patterns from the analysis. Wh
         .join(" ")
     : "";
 
-  // Try OpenAI first (streaming), fall back to Auggie (non-streaming)
-  try {
-    const result = streamText({
-      model: openai("gpt-4.1-mini"),
-      messages: await convertToModelMessages(messages),
-      system: systemPrompt,
-      tools: {
-        ...frontendTools(tools ?? {}),
-      },
-    });
+  // Use Auggie as primary LLM for chat
+  const response = await chatWithAuggie(systemPrompt, userText);
 
-    return result.toUIMessageStreamResponse({
-      sendReasoning: true,
-    });
-  } catch {
-    // Fall back to Auggie for chat (non-streaming)
-    const response = await chatWithAuggie(systemPrompt, userText);
+  const stream = createUIMessageStream({
+    execute: ({ writer }) => {
+      const chunkSize = 20;
+      for (let i = 0; i < response.length; i += chunkSize) {
+        writer.write({
+          type: "text-delta",
+          delta: response.slice(i, i + chunkSize),
+          id: "auggie-msg",
+        });
+      }
+    },
+  });
 
-    const stream = createUIMessageStream({
-      execute: ({ writer }) => {
-        writer.write({ type: "text-delta", delta: response, id: "auggie-response" });
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  }
+  return createUIMessageStreamResponse({ stream });
 }

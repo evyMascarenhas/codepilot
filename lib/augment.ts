@@ -1,12 +1,13 @@
 // Augment Code integration
-// Uses Auggie SDK for codebase analysis and chat, falls back to OpenAI
+// Uses Auggie SDK for codebase analysis and chat
 
-import { openai } from "@ai-sdk/openai";
-import { generateText } from "ai";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Ensure auggie CLI is on PATH for the SDK
-const binDir = path.resolve(process.cwd(), "node_modules/.bin");
+// Ensure auggie CLI is on PATH for the SDK — use __dirname-relative path
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, "..");
+const binDir = path.join(projectRoot, "node_modules", ".bin");
 if (!process.env.PATH?.includes(binDir)) {
   process.env.PATH = `${binDir}:${process.env.PATH}`;
 }
@@ -25,101 +26,40 @@ export class AugmentClient {
     overview: string;
     fileAnalyses: { path: string; summary: string }[];
   }> {
-    try {
-      return await this.analyzeWithAuggie(files);
-    } catch (e) {
-      console.warn("Auggie SDK failed, falling back to OpenAI:", e);
-      return this.analyzeWithOpenAI(files);
-    }
-  }
-
-  private async analyzeWithAuggie(
-    files: { path: string; content: string }[],
-  ): Promise<{
-    overview: string;
-    fileAnalyses: { path: string; summary: string }[];
-  }> {
     const Auggie = await getAuggieSDK();
     const client = await Auggie.create();
 
-    const fileList = files
-      .map((f) => `--- ${f.path} ---\n${f.content.slice(0, 2500)}`)
-      .join("\n\n");
+    try {
+      // Build a concise file summary to keep prompt manageable
+      const fileList = files
+        .slice(0, 15)
+        .map((f) => `--- ${f.path} ---\n${f.content.slice(0, 2000)}`)
+        .join("\n\n");
 
-    const overview = await client.prompt(
-      `Analyze this codebase and provide a comprehensive markdown report covering:
-1. **Project Overview**: What this project does
-2. **Architecture**: High-level architecture, key patterns
-3. **Tech Stack**: Languages, frameworks, libraries
-4. **Key Components**: Main modules and their responsibilities
-5. **Entry Points**: Where the app starts
-6. **Data Flow**: How data moves through the system
-7. **Getting Started**: How a new developer should approach this codebase
+      const prompt =
+        "Analyze these source files and write a markdown report with: " +
+        "1) Project Overview, 2) Architecture, 3) Tech Stack, " +
+        "4) Key Components, 5) Entry Points, 6) Data Flow, " +
+        "7) Getting Started guide.\n\n" +
+        fileList;
 
-Here are the key files:
+      const overview = await client.prompt(prompt);
 
-${fileList}`,
-    );
+      const fileAnalyses = files.slice(0, 15).map((f) => ({
+        path: f.path,
+        summary: `Analyzed by Augment Code: ${f.path}`,
+      }));
 
-    await client.close();
-
-    const fileAnalyses = files.slice(0, 15).map((f) => ({
-      path: f.path,
-      summary: `Source file analyzed by Augment Code: ${f.path}`,
-    }));
-
-    return {
-      overview: typeof overview === "string" ? overview : JSON.stringify(overview),
-      fileAnalyses,
-    };
-  }
-
-  private async analyzeWithOpenAI(
-    files: { path: string; content: string }[],
-  ): Promise<{
-    overview: string;
-    fileAnalyses: { path: string; summary: string }[];
-  }> {
-    const fileList = files
-      .map(
-        (f) =>
-          `--- ${f.path} ---\n${f.content.slice(0, 2000)}${f.content.length > 2000 ? "\n[truncated]" : ""}`,
-      )
-      .join("\n\n");
-
-    const { text: overview } = await generateText({
-      model: openai("gpt-4.1-mini"),
-      system:
-        "You are a senior software engineer analyzing a codebase. Provide a comprehensive but concise analysis. Use markdown formatting.",
-      prompt: `Analyze this codebase and provide:
-
-1. **Project Overview**: What this project does, its purpose
-2. **Architecture**: High-level architecture, key patterns, design decisions
-3. **Tech Stack**: Languages, frameworks, libraries, tools
-4. **Key Components**: Main modules/services and their responsibilities
-5. **Entry Points**: Where the app starts, main routes/handlers
-6. **Data Flow**: How data moves through the system
-7. **Getting Started**: How a new developer should approach this codebase
-
-Files:
-${fileList}`,
-    });
-
-    const fileAnalyses = await Promise.all(
-      files.slice(0, 15).map(async (f) => {
-        try {
-          const { text } = await generateText({
-            model: openai("gpt-4.1-nano"),
-            prompt: `In 1-2 sentences, describe what this file does:\n\nFile: ${f.path}\n\n${f.content.slice(0, 1500)}`,
-          });
-          return { path: f.path, summary: text };
-        } catch {
-          return { path: f.path, summary: `Source file at ${f.path}` };
-        }
-      }),
-    );
-
-    return { overview, fileAnalyses };
+      return {
+        overview:
+          typeof overview === "string"
+            ? overview
+            : JSON.stringify(overview),
+        fileAnalyses,
+      };
+    } finally {
+      await client.close();
+    }
   }
 }
 
@@ -131,10 +71,14 @@ export async function chatWithAuggie(
   const Auggie = await getAuggieSDK();
   const client = await Auggie.create();
 
-  const response = await client.prompt(
-    `${systemPrompt}\n\n---\n\nUser question: ${userMessage}`,
-  );
-
-  await client.close();
-  return typeof response === "string" ? response : JSON.stringify(response);
+  try {
+    const prompt =
+      systemPrompt + "\n\n---\n\nUser question: " + userMessage;
+    const response = await client.prompt(prompt);
+    return typeof response === "string"
+      ? response
+      : JSON.stringify(response);
+  } finally {
+    await client.close();
+  }
 }
