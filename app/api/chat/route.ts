@@ -1,13 +1,15 @@
-import { openai } from "@ai-sdk/openai";
 import { frontendTools } from "@assistant-ui/react-ai-sdk";
 import {
   JSONSchema7,
   streamText,
   convertToModelMessages,
+  createUIMessageStream,
   type UIMessage,
 } from "ai";
+import { openai } from "@ai-sdk/openai";
 import { getAnalyzedRepo, buildContextPrompt } from "@/lib/store";
 import { SensoClient } from "@/lib/senso";
+import { chatWithAuggie } from "@/lib/augment";
 
 export async function POST(req: Request) {
   const {
@@ -69,16 +71,47 @@ Be specific, reference actual file paths and code patterns from the analysis. Wh
     systemPrompt = `${systemPrompt}\n\n${system}`;
   }
 
-  const result = streamText({
-    model: openai("gpt-4.1-mini"),
-    messages: await convertToModelMessages(messages),
-    system: systemPrompt,
-    tools: {
-      ...frontendTools(tools ?? {}),
-    },
-  });
+  // Extract the last user message for Auggie
+  const lastUserMessage = messages
+    .filter((m) => m.role === "user")
+    .pop();
+  const userText = lastUserMessage
+    ? lastUserMessage.parts
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(" ")
+    : "";
 
-  return result.toUIMessageStreamResponse({
-    sendReasoning: true,
-  });
+  // Try OpenAI first (streaming), fall back to Auggie (non-streaming)
+  try {
+    const result = streamText({
+      model: openai("gpt-4.1-mini"),
+      messages: await convertToModelMessages(messages),
+      system: systemPrompt,
+      tools: {
+        ...frontendTools(tools ?? {}),
+      },
+    });
+
+    return result.toUIMessageStreamResponse({
+      sendReasoning: true,
+    });
+  } catch {
+    // Fall back to Auggie for chat (non-streaming)
+    const response = await chatWithAuggie(systemPrompt, userText);
+
+    const stream = createUIMessageStream({
+      execute: ({ writer }) => {
+        writer.write({ type: "text-delta", delta: response, id: "auggie-response" });
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
 }

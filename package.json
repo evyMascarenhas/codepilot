@@ -16,6 +16,7 @@
     "@assistant-ui/react": "latest",
     "@assistant-ui/react-ai-sdk": "latest",
     "@assistant-ui/react-markdown": "latest",
+    "@augmentcode/auggie": "^0.21.0",
     "@augmentcode/auggie-sdk": "^0.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-collapsible": "^1.1.12",
