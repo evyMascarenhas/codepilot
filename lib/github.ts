@@ -155,8 +155,12 @@ function ghHeaders(): Record<string, string> {
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "CodePilot-Hackathon",
   };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  // Check request-scoped token first, then env
+  const token =
+    process.env._CODEPILOT_GH_TOKEN ||
+    process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }

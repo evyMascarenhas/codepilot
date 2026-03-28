@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 export default function Home() {
   const [repoUrl, setRepoUrl] = useState("");
+  const [ghToken, setGhToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
@@ -21,7 +23,7 @@ export default function Home() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoUrl }),
+        body: JSON.stringify({ repoUrl, ghToken: ghToken || undefined }),
       });
 
       const data = await res.json();
@@ -112,6 +114,28 @@ export default function Home() {
                 "Analyze →"
               )}
             </button>
+          </div>
+
+          {/* Private repo token */}
+          <div className="max-w-xl mx-auto mt-3">
+            <button
+              type="button"
+              onClick={() => setShowToken(!showToken)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+            >
+              <span>{showToken ? "▾" : "▸"}</span>
+              Private repo? Add a GitHub token
+            </button>
+            {showToken && (
+              <input
+                type="password"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                value={ghToken}
+                onChange={(e) => setGhToken(e.target.value)}
+                disabled={loading}
+                className="mt-2 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm disabled:opacity-50"
+              />
+            )}
           </div>
 
           {/* Progress */}

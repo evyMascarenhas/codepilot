@@ -12,9 +12,14 @@ import { storeAnalyzedRepo, type AnalyzedRepo } from "@/lib/store";
 
 export async function POST(req: Request) {
   try {
-    const { repoUrl } = await req.json();
+    const { repoUrl, ghToken } = await req.json();
     if (!repoUrl) {
       return NextResponse.json({ error: "repoUrl is required" }, { status: 400 });
+    }
+
+    // Use provided token for this request (for private repos)
+    if (ghToken) {
+      process.env._CODEPILOT_GH_TOKEN = ghToken;
     }
 
     const { owner, repo } = parseGitHubUrl(repoUrl);
