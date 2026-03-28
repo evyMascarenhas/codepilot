@@ -3,6 +3,8 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 
 // Ensure auggie CLI is on PATH for the SDK — use __dirname-relative path
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -10,6 +12,15 @@ const projectRoot = path.resolve(__dirname, "..");
 const binDir = path.join(projectRoot, "node_modules", ".bin");
 if (!process.env.PATH?.includes(binDir)) {
   process.env.PATH = `${binDir}:${process.env.PATH}`;
+}
+
+// For deployment: write ~/.augment/session.json from env var if it doesn't exist
+const augmentDir = path.join(homedir(), ".augment");
+const sessionPath = path.join(augmentDir, "session.json");
+if (!existsSync(sessionPath) && process.env.AUGMENT_SESSION_JSON) {
+  mkdirSync(augmentDir, { recursive: true });
+  writeFileSync(sessionPath, process.env.AUGMENT_SESSION_JSON, "utf-8");
+  console.log("[augment] Wrote session.json from AUGMENT_SESSION_JSON env var");
 }
 
 async function getAuggieSDK() {
